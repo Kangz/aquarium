@@ -433,6 +433,8 @@ class Aquarium
     bool init(int argc, char **argv);
     void display();
     Texture *getSkybox() { return mTextureMap["skybox"]; }
+    void render();
+    Context *getContext() { return mContext; }
 
     std::bitset<static_cast<size_t>(TOGGLE::TOGGLEMAX)> toggleBitset;
     LightWorldPositionUniform lightWorldPositionUniform;
@@ -443,7 +445,6 @@ class Aquarium
     int fishCount[5];
 
   private:
-    void render();
     void loadReource();
     void loadPlacement();
     void loadModels();
