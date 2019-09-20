@@ -26,11 +26,13 @@
 #include "SeaweedModelDawn.h"
 #include "TextureDawn.h"
 
+#include "common/AQUARIUM_ASSERT.h"
 #include "common/Constants.h"
 #include "imgui_impl_dawn.h"
 #include "imgui_impl_glfw.h"
 #include "utils/BackendBinding.h"
 #include "utils/ComboRenderPipelineDescriptor.h"
+#include "utils/SystemUtils.h"
 
 #include "../Aquarium.h"
 
@@ -43,6 +45,7 @@ ContextDawn::ContextDawn(BACKENDTYPE backendType)
       groupLayoutFishPer(nullptr),
       fishPersBuffer(nullptr),
       bindGroupFishPers(nullptr),
+      stagingBuffer(nullptr),
       fishPers(nullptr),
       mDevice(nullptr),
       mWindow(nullptr),
@@ -57,7 +60,8 @@ ContextDawn::ContextDawn(BACKENDTYPE backendType)
       mPipeline(nullptr),
       mBindGroup(nullptr),
       mPreferredSwapChainFormat(dawn::TextureFormat::RGBA8Unorm),
-      mEnableMSAA(false)
+      mEnableMSAA(false),
+      mappedData(nullptr)
 {
     mResourceHelper = new ResourceHelper("dawn", "", backendType);
     initAvailableToggleBitset(backendType);
@@ -90,6 +94,8 @@ ContextDawn::~ContextDawn()
 
     groupLayoutFishPer = nullptr;
     destoryFishResource();
+
+    stagingBuffer = nullptr;
 
     mSwapchain               = nullptr;
     queue                    = nullptr;
@@ -347,6 +353,19 @@ dawn::CommandBuffer ContextDawn::copyBufferToTexture(const dawn::BufferCopyView 
     return copy;
 }
 
+dawn::CommandBuffer ContextDawn::copyBufferToBuffer(dawn::Buffer const &srcBuffer,
+                                                    uint64_t srcOffset,
+                                                    dawn::Buffer const &destBuffer,
+                                                    uint64_t destOffset,
+                                                    uint64_t size)
+{
+    dawn::CommandEncoder encoder = mDevice.CreateCommandEncoder();
+    encoder.CopyBufferToBuffer(srcBuffer, srcOffset, destBuffer, destOffset, size);
+    dawn::CommandBuffer copy = encoder.Finish();
+
+    return copy;
+}
+
 dawn::ShaderModule ContextDawn::createShaderModule(utils::SingleShaderStage stage,
                                                    const std::string &str) const
 {
@@ -541,6 +560,12 @@ void ContextDawn::initGeneralResources(Aquarium* aquarium)
     }
     reallocResource(aquarium->getPreFishCount(), aquarium->getCurFishCount(),
                     enableDynamicBufferOffset);
+
+    // Create a big buffer for buffer mapping async
+    // TODO(yizhou): Use the staging buffer to upload more data, such as vertex buffers and world
+    // uniforms
+    stagingBuffer = createBuffer(sizeof(FishPer) * aquarium->getCurFishCount(),
+                                 dawn::BufferUsage::MapWrite | dawn::BufferUsage::CopySrc);
 }
 
 void ContextDawn::updateWorldlUniforms(Aquarium* aquarium)
@@ -591,16 +616,28 @@ void ContextDawn::DoFlush()
 {
     mRenderPass.EndPass();
     dawn::CommandBuffer cmd = mCommandEncoder.Finish();
-    queue.Submit(1, &cmd);
+    mCommandBuffers.emplace_back(cmd);
+
+    // Wait for staging buffer uploading
+    while (mappedData == nullptr)
+    {
+        WaitABit();
+    }
+    mappedData = nullptr;
+
+    stagingBuffer.Unmap();
+
+    Flush();
 
     mSwapchain.Present(mBackbuffer);
 
     glfwPollEvents();
 }
 
-void ContextDawn::FlushInit()
+void ContextDawn::Flush()
 {
     queue.Submit(mCommandBuffers.size(), mCommandBuffers.data());
+    mCommandBuffers.clear();
 }
 
 void ContextDawn::Terminate()
@@ -728,6 +765,12 @@ void ContextDawn::reallocResource(int preTotalInstance,
     fishPersBuffer = createBufferFromData(fishPers, sizeof(FishPer) * curTotalInstance,
                                           dawn::BufferUsage::CopyDst | dawn::BufferUsage::Uniform);
 
+    // TODO(yizhou): the staging buffer should be bigger to hold other uniform buffers in the
+    // future. But now we only use the buffer to upload fish buffer, so the size is the same as fish
+    // buffer.
+    stagingBuffer = createBuffer(sizeof(FishPer) * curTotalInstance,
+                                 dawn::BufferUsage::MapWrite | dawn::BufferUsage::CopySrc);
+
     if (enableDynamicBufferOffset)
     {
         bindGroupFishPers[0] =
@@ -743,14 +786,47 @@ void ContextDawn::reallocResource(int preTotalInstance,
     }
 }
 
+void ContextDawn::MapWriteCallback(DawnBufferMapAsyncStatus status,
+                                   void *data,
+                                   uint64_t,
+                                   void *userdata)
+{
+    ASSERT(status == DAWN_BUFFER_MAP_ASYNC_STATUS_SUCCESS);
+    ASSERT(data != nullptr);
+    ContextDawn *contextDawn = static_cast<ContextDawn *>(userdata);
+
+    int size                = contextDawn->mCurTotalInstance;
+    contextDawn->mappedData = data;
+    memcpy(contextDawn->mappedData, contextDawn->fishPers,
+           sizeof(FishPer) * contextDawn->mCurTotalInstance);
+
+    // Create a command buffer that copy from the staging buffer to dest buffer.
+    dawn::CommandBuffer command = contextDawn->copyBufferToBuffer(
+        contextDawn->stagingBuffer, 0, contextDawn->fishPersBuffer, 0, sizeof(FishPer) * size);
+    contextDawn->mCommandBuffers.emplace_back(command);
+}
+
+void ContextDawn::WaitABit()
+{
+    mDevice.Tick();
+
+    utils::USleep(100);
+}
+
 void ContextDawn::updateAllFishData()
 {
-    setBufferData(fishPersBuffer, 0, sizeof(FishPer) * mCurTotalInstance, fishPers);
+    // SetSubData is a sync method to upload data and the API will be eliminated in Dawn soon.
+    // And real applications prefer to use async method to upload data, so we replace setSubData
+    // by buffer mapping async.
+    // setBufferData(fishPersBuffer, 0, sizeof(FishPer) * mCurTotalInstance, fishPers);
+    stagingBuffer.MapWriteAsync(MapWriteCallback, this);
 }
 
 void ContextDawn::destoryFishResource()
 {
     fishPersBuffer = nullptr;
+    stagingBuffer  = nullptr;
+
     if (fishPers != nullptr)
     {
         delete fishPers;

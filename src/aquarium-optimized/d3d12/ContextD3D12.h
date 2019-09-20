@@ -37,7 +37,7 @@ class ContextD3D12 : public Context
     void showFPS(const FPSTimer &fpsTimer, int *fishCount) override;
     void destoryImgUI() override;
 
-    void FlushInit() override;
+    void Flush() override;
     void preFrame() override;
 
     Model *createModel(Aquarium *aquarium, MODELGROUP type, MODELNAME name, bool blend) override;

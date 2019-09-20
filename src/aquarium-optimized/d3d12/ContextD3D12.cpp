@@ -416,7 +416,7 @@ void ContextD3D12::DoFlush()
     glfwPollEvents();
 }
 
-void ContextD3D12::FlushInit()
+void ContextD3D12::Flush()
 {
     // Close the command list and execute it to begin the initial GPU setup.
     ThrowIfFailed(mCommandList->Close());

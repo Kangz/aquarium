@@ -329,7 +329,7 @@ bool Aquarium::init(int argc, char **argv)
 
     setupModelEnumMap();
     loadReource();
-    mContext->FlushInit();
+    mContext->Flush();
 
     std::cout << "End loading.\nCost " << getElapsedTime() << "s totally." << std::endl;
     mContext->showWindow();

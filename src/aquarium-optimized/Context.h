@@ -53,7 +53,7 @@ class Context
     virtual void KeyBoardQuit()                                                               = 0;
     virtual void DoFlush()                                                                    = 0;
     virtual void Terminate()                                                                  = 0;
-    virtual void FlushInit() {}
+    virtual void Flush() {}
     virtual void preFrame()   = 0;
     virtual void showWindow() = 0;
     virtual void showFPS(const FPSTimer &fpsTimer, int *fishCount) = 0;
