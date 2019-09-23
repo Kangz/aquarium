@@ -100,6 +100,7 @@ class ContextDawn : public Context
                          int curTotalInstance,
                          bool enableDynamicBufferOffset) override;
     void updateAllFishData() override;
+    dawn::CreateBufferMappedResult CreateBufferMapped(dawn::BufferUsage usage, uint64_t size);
 
     std::vector<dawn::CommandBuffer> mCommandBuffers;
     dawn::Queue queue;
